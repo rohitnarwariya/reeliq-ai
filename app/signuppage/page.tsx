@@ -25,7 +25,7 @@ export default function SignupPage() {
     }
 
     alert("Account created successfully!");
-    router.push("/login");
+    router.push("/loginpage");
   };
 
   return (
