@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useRouter } from "next/navigation";
 
 export default function SignupPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  const router = useRouter();
 
   const handleSignup = async () => {
     const { data, error } = await supabase.auth.signUp({
@@ -13,13 +16,16 @@ export default function SignupPage() {
       password,
     });
 
+    console.log("SIGNUP DATA:", data);
+    console.log("SIGNUP ERROR:", error);
+
     if (error) {
       alert(error.message);
       return;
     }
 
     alert("Account created successfully!");
-    console.log(data);
+    router.push("/login");
   };
 
   return (
