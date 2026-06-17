@@ -1,60 +1,539 @@
 "use client";
 
-import { useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useState, useEffect, FormEvent, useRef, useCallback } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { supabase } from "@/lib/supabase";
+
+interface FormErrors {
+  fullName?: string;
+  email?: string;
+  password?: string;
+  confirmPassword?: string;
+  general?: string;
+}
+
+type ToastType = "success" | "error";
+
+interface Toast {
+  type: ToastType;
+  message: string;
+  visible: boolean;
+}
+
+/* ─── Password strength ─── */
+type StrengthLevel = 0 | 1 | 2 | 3 | 4;
+
+function getStrength(password: string): StrengthLevel {
+  let score = 0;
+  if (password.length >= 6) score++;
+  if (password.length >= 10) score++;
+  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
+  if (/\d/.test(password)) score++;
+  if (/[^a-zA-Z0-9]/.test(password)) score++;
+  return Math.min(score, 4) as StrengthLevel;
+}
+
+const strengthLabels: Record<StrengthLevel, string> = {
+  0: "",
+  1: "Weak",
+  2: "Fair",
+  3: "Good",
+  4: "Strong",
+};
+
+const strengthColors: Record<StrengthLevel, string> = {
+  0: "bg-transparent",
+  1: "bg-rose-500/60",
+  2: "bg-amber-500/60",
+  3: "bg-lime-500/60",
+  4: "bg-emerald-500/60",
+};
 
 export default function SignupPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-
   const router = useRouter();
 
-  const handleSignup = async () => {
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [loading, setLoading] = useState(true); // session check
+  const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState<FormErrors>({});
+  const [toast, setToast] = useState<Toast>({
+    type: "success",
+    message: "",
+    visible: false,
+  });
 
-    console.log("SIGNUP DATA:", data);
-    console.log("SIGNUP ERROR:", error);
+  const spotlightRef = useRef<HTMLDivElement>(null);
 
-    if (error) {
-      alert(error.message);
+  const showToast = useCallback((type: ToastType, message: string) => {
+    setToast({ type, message, visible: true });
+    setTimeout(
+      () => setToast((prev) => ({ ...prev, visible: false })),
+      4000
+    );
+  }, []);
+
+  /* ─── Session guard: logged-in users → /Dashboard ─── */
+  useEffect(() => {
+    const check = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session) {
+        router.replace("/Dashboard");
+        return;
+      }
+      setLoading(false);
+    };
+    check();
+  }, [router]);
+
+  /* ─── Mouse spotlight ─── */
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (spotlightRef.current) {
+      spotlightRef.current.style.left = `${e.clientX}px`;
+      spotlightRef.current.style.top = `${e.clientY}px`;
+    }
+  }, []);
+
+  /* ─── Validation ─── */
+  const validate = (): FormErrors => {
+    const errs: FormErrors = {};
+
+    if (!fullName.trim()) errs.fullName = "Full name is required.";
+    else if (fullName.trim().length < 2)
+      errs.fullName = "Name must be at least 2 characters.";
+
+    if (!email.trim()) errs.email = "Email is required.";
+    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      errs.email = "Enter a valid email address.";
+
+    if (!password) errs.password = "Password is required.";
+    else if (password.length < 6)
+      errs.password = "Password must be at least 6 characters.";
+    else if (getStrength(password) < 2)
+      errs.password =
+        "Use a mix of uppercase, lowercase, numbers, or symbols.";
+
+    if (!confirmPassword)
+      errs.confirmPassword = "Please confirm your password.";
+    else if (password && confirmPassword !== password)
+      errs.confirmPassword = "Passwords do not match.";
+
+    return errs;
+  };
+
+  /* ─── Handle signup ─── */
+  const handleSignup = async (e: FormEvent) => {
+    e.preventDefault();
+    setErrors({});
+
+    const validationErrors = validate();
+    if (Object.keys(validationErrors).length > 0) {
+      setErrors(validationErrors);
       return;
     }
 
-    alert("Account created successfully!");
-    router.push("/loginpage");
+    setSubmitting(true);
+
+    const { error } = await supabase.auth.signUp({
+      email: email.trim(),
+      password,
+      options: {
+        data: {
+          full_name: fullName.trim(),
+        },
+      },
+    });
+
+    if (error) {
+      setSubmitting(false);
+      setErrors({ general: error.message });
+      showToast("error", error.message);
+      return;
+    }
+
+    showToast("success", "Account created successfully!");
+    setTimeout(() => router.push("/loginpage"), 1000);
   };
 
+  /* ─── Loading guard ─── */
+  if (loading) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#0a0a1a]">
+        <div className="glass-loading flex flex-col items-center gap-5 rounded-2xl px-10 py-12">
+          <div className="relative flex h-12 w-12 items-center justify-center">
+            <div className="absolute inset-0 animate-ping rounded-full bg-indigo-500/30" />
+            <div className="absolute inset-2 animate-spin rounded-full border-2 border-indigo-400 border-t-transparent" />
+            <div className="h-3 w-3 rounded-full bg-indigo-400" />
+          </div>
+          <p className="text-sm font-medium tracking-wide text-white/60">
+            Checking session…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const strength = getStrength(password);
+
   return (
-    <div className="flex min-h-screen items-center justify-center">
-      <div className="flex flex-col gap-4 w-80">
-        <h1 className="text-2xl font-bold">Sign Up</h1>
+    <div
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4"
+      onMouseMove={handleMouseMove}
+    >
+      {/* ─── Liquid Glass Background ─── */}
+      <div className="liquid-bg">
+        <div className="liquid-orb liquid-orb--1" />
+        <div className="liquid-orb liquid-orb--2" />
+        <div className="liquid-orb liquid-orb--3" />
+        <div className="liquid-orb liquid-orb--4" />
+        <div className="liquid-orb liquid-orb--5" />
+      </div>
 
-        <input
-          type="email"
-          placeholder="Email"
-          className="border p-2 rounded"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-        />
+      {/* ─── Mouse spotlight ─── */}
+      <div ref={spotlightRef} className="spotlight" aria-hidden="true" />
 
-        <input
-          type="password"
-          placeholder="Password"
-          className="border p-2 rounded"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-        />
+      {/* ─── Toast ─── */}
+      <div
+        className={`fixed right-4 top-4 z-50 max-w-sm transform rounded-xl border px-5 py-3 text-sm font-medium shadow-2xl backdrop-blur-xl transition-all duration-500 ${
+          toast.visible
+            ? "translate-x-0 opacity-100"
+            : "translate-x-8 opacity-0 pointer-events-none"
+        } ${
+          toast.type === "success"
+            ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+            : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <span className="text-lg">
+            {toast.type === "success" ? "✓" : "✕"}
+          </span>
+          <span>{toast.message}</span>
+        </div>
+      </div>
 
-        <button
-          onClick={handleSignup}
-          className="bg-black text-white p-2 rounded"
-        >
-          Create Account
-        </button>
+      {/* ─── Auth Card ─── */}
+      <div className="animate-fade-in glass-card relative z-10 w-full max-w-md rounded-3xl p-8 sm:p-10">
+        {/* Logo / Branding */}
+        <div className="mb-8 text-center">
+          <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 backdrop-blur-sm">
+            <span className="text-2xl font-bold text-gradient">R</span>
+          </div>
+          <h1 className="text-2xl font-bold text-white">Create account</h1>
+          <p className="mt-1 text-sm text-white/40">
+            Join ReelIQ Studio and start creating
+          </p>
+        </div>
+
+        {/* ─── General error ─── */}
+        {errors.general && (
+          <div className="mb-5 flex items-center gap-2 rounded-xl border border-rose-500/20 bg-rose-500/8 px-4 py-3 text-sm text-rose-300 backdrop-blur-sm">
+            <svg
+              className="h-4 w-4 shrink-0"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+              strokeWidth={2}
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
+              />
+            </svg>
+            {errors.general}
+          </div>
+        )}
+
+        <form onSubmit={handleSignup} className="flex flex-col gap-5">
+          {/* ─── Full Name ─── */}
+          <div>
+            <label
+              htmlFor="signup-name"
+              className="mb-1.5 block text-sm font-medium text-white/60"
+            >
+              Full name
+            </label>
+            <div
+              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
+                errors.fullName ? "border-rose-500/40" : "border-white/10"
+              }`}
+            >
+              <svg
+                className="h-5 w-5 shrink-0 text-white/30"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z"
+                />
+              </svg>
+              <input
+                id="signup-name"
+                type="text"
+                autoComplete="name"
+                placeholder="John Doe"
+                value={fullName}
+                onChange={(e) => {
+                  setFullName(e.target.value);
+                  if (errors.fullName)
+                    setErrors((prev) => ({ ...prev, fullName: undefined }));
+                }}
+                disabled={submitting}
+                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
+              />
+            </div>
+            {errors.fullName && (
+              <p className="mt-1 text-xs text-rose-400">{errors.fullName}</p>
+            )}
+          </div>
+
+          {/* ─── Email ─── */}
+          <div>
+            <label
+              htmlFor="signup-email"
+              className="mb-1.5 block text-sm font-medium text-white/60"
+            >
+              Email address
+            </label>
+            <div
+              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
+                errors.email ? "border-rose-500/40" : "border-white/10"
+              }`}
+            >
+              <svg
+                className="h-5 w-5 shrink-0 text-white/30"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"
+                />
+              </svg>
+              <input
+                id="signup-email"
+                type="email"
+                autoComplete="email"
+                placeholder="you@example.com"
+                value={email}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (errors.email)
+                    setErrors((prev) => ({ ...prev, email: undefined }));
+                }}
+                disabled={submitting}
+                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
+              />
+            </div>
+            {errors.email && (
+              <p className="mt-1 text-xs text-rose-400">{errors.email}</p>
+            )}
+          </div>
+
+          {/* ─── Password ─── */}
+          <div>
+            <label
+              htmlFor="signup-password"
+              className="mb-1.5 block text-sm font-medium text-white/60"
+            >
+              Password
+            </label>
+            <div
+              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
+                errors.password ? "border-rose-500/40" : "border-white/10"
+              }`}
+            >
+              <svg
+                className="h-5 w-5 shrink-0 text-white/30"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
+                />
+              </svg>
+              <input
+                id="signup-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="new-password"
+                placeholder="Create a strong password"
+                value={password}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (errors.password)
+                    setErrors((prev) => ({ ...prev, password: undefined }));
+                }}
+                disabled={submitting}
+                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="shrink-0 text-white/30 transition hover:text-white/60"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                )}
+              </button>
+            </div>
+
+            {/* ─── Strength indicator ─── */}
+            {password.length > 0 && (
+              <div className="mt-2">
+                <div className="flex gap-1.5">
+                  {[1, 2, 3, 4].map((bar) => (
+                    <div
+                      key={bar}
+                      className={`h-1 w-full rounded-full transition-all duration-300 ${
+                        bar <= strength
+                          ? strengthColors[strength]
+                          : "bg-white/5"
+                      }`}
+                    />
+                  ))}
+                </div>
+                <p
+                  className={`mt-1 text-xs font-medium ${
+                    strength >= 3 ? "text-emerald-400" : strength >= 2 ? "text-amber-400" : "text-rose-400"
+                  }`}
+                >
+                  {strengthLabels[strength]}
+                </p>
+              </div>
+            )}
+
+            {errors.password && (
+              <p className="mt-1 text-xs text-rose-400">{errors.password}</p>
+            )}
+          </div>
+
+          {/* ─── Confirm Password ─── */}
+          <div>
+            <label
+              htmlFor="signup-confirm"
+              className="mb-1.5 block text-sm font-medium text-white/60"
+            >
+              Confirm password
+            </label>
+            <div
+              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
+                errors.confirmPassword ? "border-rose-500/40" : "border-white/10"
+              }`}
+            >
+              <svg
+                className="h-5 w-5 shrink-0 text-white/30"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={1.5}
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
+                />
+              </svg>
+              <input
+                id="signup-confirm"
+                type={showConfirm ? "text" : "password"}
+                autoComplete="new-password"
+                placeholder="Re-enter your password"
+                value={confirmPassword}
+                onChange={(e) => {
+                  setConfirmPassword(e.target.value);
+                  if (errors.confirmPassword)
+                    setErrors((prev) => ({
+                      ...prev,
+                      confirmPassword: undefined,
+                    }));
+                }}
+                disabled={submitting}
+                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => setShowConfirm((v) => !v)}
+                className="shrink-0 text-white/30 transition hover:text-white/60"
+                aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
+              >
+                {showConfirm ? (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                ) : (
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                )}
+              </button>
+            </div>
+            {errors.confirmPassword && (
+              <p className="mt-1 text-xs text-rose-400">
+                {errors.confirmPassword}
+              </p>
+            )}
+          </div>
+
+          {/* ─── Submit ─── */}
+          <button
+            type="submit"
+            disabled={submitting}
+            className="glass-btn mt-1 flex w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? (
+              <>
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                Creating account…
+              </>
+            ) : (
+              <>
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM3 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 019.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
+                </svg>
+                Create Account
+              </>
+            )}
+          </button>
+        </form>
+
+        {/* ─── Navigation ─── */}
+        <p className="mt-6 text-center text-sm text-white/40">
+          Already have an account?{" "}
+          <Link
+            href="/loginpage"
+            className="font-semibold text-indigo-400 transition hover:text-indigo-300"
+          >
+            Sign In
+          </Link>
+        </p>
       </div>
     </div>
   );

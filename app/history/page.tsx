@@ -12,8 +12,6 @@ type RecommendationHistory = {
   reel_url?: string | null;
   niche?: string | null;
   songs?: string[] | null;
-  song_name?: string | null;
-  spotify_url?: string | null;
   created_at?: string | null;
 };
 
@@ -80,12 +78,38 @@ export default function HistoryPage() {
     loadData();
   }, [router]);
 
-  const getSongNames = (item: RecommendationHistory) => {
-    if (item.songs && item.songs.length > 0) {
-      return item.songs;
+  const handleDelete = async (reelUrl: string) => {
+    if (!window.confirm("Delete this reel permanently?")) return;
+
+    const { error: historyError } = await supabase
+      .from("recommendation_history")
+      .delete()
+      .eq("reel_url", reelUrl);
+
+    if (historyError) {
+      alert(historyError.message);
+      return;
     }
 
-    return item.song_name ? [item.song_name] : [];
+    const { error: reelError } = await supabase
+      .from("reels")
+      .delete()
+      .eq("video_url", reelUrl);
+
+    if (reelError) {
+      alert(reelError.message);
+      return;
+    }
+
+    setHistory((prev) =>
+      prev.filter((item) => item.reel_url !== reelUrl)
+    );
+
+    alert("Reel deleted successfully");
+  };
+
+  const getSongNames = (item: RecommendationHistory) => {
+    return item.songs ?? [];
   };
 
   return (
@@ -159,6 +183,13 @@ export default function HistoryPage() {
                       </span>
                     </div>
 
+                    <button
+                      onClick={() => item.reel_url && handleDelete(item.reel_url)}
+                      className="mt-4 rounded-md bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+                    >
+                      Delete Reel
+                    </button>
+
                     <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
                       <p className="text-sm font-semibold text-slate-700">
                         Recommended songs
@@ -169,20 +200,9 @@ export default function HistoryPage() {
                           {songNames.map((songName, index) => (
                             <div
                               key={`${item.id}-${songName}-${index}`}
-                              className="flex flex-col gap-3 rounded-md border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 shadow-sm sm:flex-row sm:items-center sm:justify-between"
+                              className="rounded-md border border-slate-200 bg-white px-3 py-3 text-sm font-medium text-slate-700 shadow-sm"
                             >
-                              <span>{songName}</span>
-
-                              {item.spotify_url && (
-                                <a
-                                  href={item.spotify_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex w-full justify-center rounded-md bg-[#1DB954] px-3 py-2 text-xs font-bold text-white transition hover:bg-[#1ed760] sm:w-auto"
-                                >
-                                  Open Spotify
-                                </a>
-                              )}
+                              {songName}
                             </div>
                           ))}
                         </div>
