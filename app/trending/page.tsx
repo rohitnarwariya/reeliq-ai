@@ -317,9 +317,10 @@ export default function TrendingPage() {
           {filtered.length > 0 ? (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {filtered.map((song, idx) => (
-                <article
+                <Link
+                  href={`/song/${song.id}`}
                   key={song.id || idx}
-                  className="glass-song group rounded-xl p-5 transition-all hover:border-indigo-500/30 hover:shadow-lg hover:shadow-indigo-500/5"
+                  className="glass-song group rounded-xl p-5 transition-all hover:border-indigo-500/30 hover:shadow-lg hover:shadow-indigo-500/5 block"
                   style={{ animationDelay: `${idx * 0.05}s` }}
                 >
                   <div className="flex flex-col gap-3">
@@ -389,7 +390,7 @@ export default function TrendingPage() {
                       ) : null}
                     </div>
                   </div>
-                </article>
+                </Link>
               ))}
             </div>
           ) : (
