@@ -7,9 +7,6 @@ import { supabase } from "@/lib/supabase";
 
 interface FormErrors {
   fullName?: string;
-  email?: string;
-  password?: string;
-  confirmPassword?: string;
   instagramHandle?: string;
   instagramUrl?: string;
   niche?: string;
@@ -25,50 +22,16 @@ interface Toast {
   visible: boolean;
 }
 
-/* ─── Password strength ─── */
-type StrengthLevel = 0 | 1 | 2 | 3 | 4;
-
-function getStrength(password: string): StrengthLevel {
-  let score = 0;
-  if (password.length >= 6) score++;
-  if (password.length >= 10) score++;
-  if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
-  if (/\d/.test(password)) score++;
-  if (/[^a-zA-Z0-9]/.test(password)) score++;
-  return Math.min(score, 4) as StrengthLevel;
-}
-
-const strengthLabels: Record<StrengthLevel, string> = {
-  0: "",
-  1: "Weak",
-  2: "Fair",
-  3: "Good",
-  4: "Strong",
-};
-
-const strengthColors: Record<StrengthLevel, string> = {
-  0: "bg-transparent",
-  1: "bg-rose-500/60",
-  2: "bg-amber-500/60",
-  3: "bg-lime-500/60",
-  4: "bg-emerald-500/60",
-};
-
-export default function SignupPage() {
+export default function ProfilePage() {
   const router = useRouter();
 
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [instagramHandle, setInstagramHandle] = useState("");
   const [instagramUrl, setInstagramUrl] = useState("");
   const [niche, setNiche] = useState("");
   const [followerRange, setFollowerRange] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
-  const [loading, setLoading] = useState(true); // session check
-  const [submitting, setSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<FormErrors>({});
   const [toast, setToast] = useState<Toast>({
     type: "success",
@@ -86,16 +49,32 @@ export default function SignupPage() {
     );
   }, []);
 
-  /* ─── Session guard: logged-in users → /Dashboard ─── */
+  /* ─── Session guard ─── */
   useEffect(() => {
     const check = async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (session) {
-        router.replace("/Dashboard");
+      if (!session) {
+        router.replace("/loginpage");
         return;
       }
+
+      // Load existing profile
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .single();
+
+      if (data) {
+        setFullName(data.full_name || "");
+        setInstagramHandle(data.instagram_handle || "");
+        setInstagramUrl(data.instagram_url || "");
+        setNiche(data.niche || "");
+        setFollowerRange(data.follower_range || "");
+      }
+
       setLoading(false);
     };
     check();
@@ -117,29 +96,13 @@ export default function SignupPage() {
     else if (fullName.trim().length < 2)
       errs.fullName = "Name must be at least 2 characters.";
 
-    if (!email.trim()) errs.email = "Email is required.";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
-      errs.email = "Enter a valid email address.";
-
-    if (!password) errs.password = "Password is required.";
-    else if (password.length < 6)
-      errs.password = "Password must be at least 6 characters.";
-    else if (getStrength(password) < 2)
-      errs.password =
-        "Use a mix of uppercase, lowercase, numbers, or symbols.";
-
-    if (!confirmPassword)
-      errs.confirmPassword = "Please confirm your password.";
-    else if (password && confirmPassword !== password)
-      errs.confirmPassword = "Passwords do not match.";
-
     if (!niche.trim()) errs.niche = "Niche is required.";
 
     return errs;
   };
 
-  /* ─── Handle signup ─── */
-  const handleSignup = async (e: FormEvent) => {
+  /* ─── Handle save ─── */
+  const handleSave = async (e: FormEvent) => {
     e.preventDefault();
     setErrors({});
 
@@ -149,28 +112,20 @@ export default function SignupPage() {
       return;
     }
 
-    setSubmitting(true);
+    setSaving(true);
 
-    const { error } = await supabase.auth.signUp({
-      email: email.trim(),
-      password,
-      options: {
-        data: {
-          full_name: fullName.trim(),
-        },
-      },
-    });
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-    if (error) {
-      setSubmitting(false);
-      setErrors({ general: error.message });
-      showToast("error", error.message);
+    if (!user) {
+      setErrors({ general: "Unauthorized." });
+      setSaving(false);
       return;
     }
 
-    // Save profile data
-    const { error: profileError } = await supabase.from("profiles").upsert({
-      user_id: (await supabase.auth.getUser()).data.user?.id,
+    const { error } = await supabase.from("profiles").upsert({
+      user_id: user.id,
       full_name: fullName.trim(),
       instagram_handle: instagramHandle.trim() || null,
       instagram_url: instagramUrl.trim() || null,
@@ -178,12 +133,15 @@ export default function SignupPage() {
       follower_range: followerRange.trim(),
     });
 
-    if (profileError) {
-      console.error("Profile save error:", profileError);
+    if (error) {
+      setErrors({ general: error.message });
+      showToast("error", error.message);
+      setSaving(false);
+      return;
     }
 
-    showToast("success", "Account created successfully!");
-    setTimeout(() => router.push("/loginpage"), 1000);
+    showToast("success", "Profile saved successfully!");
+    setSaving(false);
   };
 
   /* ─── Loading guard ─── */
@@ -197,18 +155,16 @@ export default function SignupPage() {
             <div className="h-3 w-3 rounded-full bg-indigo-400" />
           </div>
           <p className="text-sm font-medium tracking-wide text-white/60">
-            Checking session…
+            Loading profile…
           </p>
         </div>
       </div>
     );
   }
 
-  const strength = getStrength(password);
-
   return (
     <div
-      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4"
+      className="relative flex min-h-screen items-center justify-center overflow-hidden px-4 py-12"
       onMouseMove={handleMouseMove}
     >
       {/* ─── Liquid Glass Background ─── */}
@@ -243,16 +199,16 @@ export default function SignupPage() {
         </div>
       </div>
 
-      {/* ─── Auth Card ─── */}
+      {/* ─── Profile Card ─── */}
       <div className="animate-fade-in glass-card relative z-10 w-full max-w-md rounded-3xl p-8 sm:p-10">
         {/* Logo / Branding */}
         <div className="mb-8 text-center">
           <div className="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-indigo-500/20 to-purple-500/20 backdrop-blur-sm">
             <span className="text-2xl font-bold text-gradient">R</span>
           </div>
-          <h1 className="text-2xl font-bold text-white">Create account</h1>
+          <h1 className="text-2xl font-bold text-white">Edit Profile</h1>
           <p className="mt-1 text-sm text-white/40">
-            Join ReelIQ Studio and start creating
+            Update your creator information
           </p>
         </div>
 
@@ -276,11 +232,11 @@ export default function SignupPage() {
           </div>
         )}
 
-        <form onSubmit={handleSignup} className="flex flex-col gap-5">
+        <form onSubmit={handleSave} className="flex flex-col gap-5">
           {/* ─── Full Name ─── */}
           <div>
             <label
-              htmlFor="signup-name"
+              htmlFor="profile-name"
               className="mb-1.5 block text-sm font-medium text-white/60"
             >
               Full name
@@ -304,7 +260,7 @@ export default function SignupPage() {
                 />
               </svg>
               <input
-                id="signup-name"
+                id="profile-name"
                 type="text"
                 autoComplete="name"
                 placeholder="John Doe"
@@ -314,7 +270,7 @@ export default function SignupPage() {
                   if (errors.fullName)
                     setErrors((prev) => ({ ...prev, fullName: undefined }));
                 }}
-                disabled={submitting}
+                disabled={saving}
                 className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
               />
             </div>
@@ -323,145 +279,10 @@ export default function SignupPage() {
             )}
           </div>
 
-          {/* ─── Email ─── */}
-          <div>
-            <label
-              htmlFor="signup-email"
-              className="mb-1.5 block text-sm font-medium text-white/60"
-            >
-              Email address
-            </label>
-            <div
-              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
-                errors.email ? "border-rose-500/40" : "border-white/10"
-              }`}
-            >
-              <svg
-                className="h-5 w-5 shrink-0 text-white/30"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75"
-                />
-              </svg>
-              <input
-                id="signup-email"
-                type="email"
-                autoComplete="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (errors.email)
-                    setErrors((prev) => ({ ...prev, email: undefined }));
-                }}
-                disabled={submitting}
-                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
-              />
-            </div>
-            {errors.email && (
-              <p className="mt-1 text-xs text-rose-400">{errors.email}</p>
-            )}
-          </div>
-
-          {/* ─── Password ─── */}
-          <div>
-            <label
-              htmlFor="signup-password"
-              className="mb-1.5 block text-sm font-medium text-white/60"
-            >
-              Password
-            </label>
-            <div
-              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
-                errors.password ? "border-rose-500/40" : "border-white/10"
-              }`}
-            >
-              <svg
-                className="h-5 w-5 shrink-0 text-white/30"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"
-                />
-              </svg>
-              <input
-                id="signup-password"
-                type={showPassword ? "text" : "password"}
-                autoComplete="new-password"
-                placeholder="Create a strong password"
-                value={password}
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  if (errors.password)
-                    setErrors((prev) => ({ ...prev, password: undefined }));
-                }}
-                disabled={submitting}
-                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="shrink-0 text-white/30 transition hover:text-white/60"
-                aria-label={showPassword ? "Hide password" : "Show password"}
-              >
-                {showPassword ? (
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  </svg>
-                ) : (
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                )}
-              </button>
-            </div>
-
-            {/* ─── Strength indicator ─── */}
-            {password.length > 0 && (
-              <div className="mt-2">
-                <div className="flex gap-1.5">
-                  {[1, 2, 3, 4].map((bar) => (
-                    <div
-                      key={bar}
-                      className={`h-1 w-full rounded-full transition-all duration-300 ${
-                        bar <= strength
-                          ? strengthColors[strength]
-                          : "bg-white/5"
-                      }`}
-                    />
-                  ))}
-                </div>
-                <p
-                  className={`mt-1 text-xs font-medium ${
-                    strength >= 3 ? "text-emerald-400" : strength >= 2 ? "text-amber-400" : "text-rose-400"
-                  }`}
-                >
-                  {strengthLabels[strength]}
-                </p>
-              </div>
-            )}
-
-            {errors.password && (
-              <p className="mt-1 text-xs text-rose-400">{errors.password}</p>
-            )}
-          </div>
-
           {/* ─── Instagram Handle (optional) ─── */}
           <div>
             <label
-              htmlFor="signup-instagram"
+              htmlFor="profile-instagram"
               className="mb-1.5 block text-sm font-medium text-white/60"
             >
               Instagram Handle <span className="text-white/30">(optional)</span>
@@ -485,7 +306,7 @@ export default function SignupPage() {
                 />
               </svg>
               <input
-                id="signup-instagram"
+                id="profile-instagram"
                 type="text"
                 placeholder="@username"
                 value={instagramHandle}
@@ -494,7 +315,7 @@ export default function SignupPage() {
                   if (errors.instagramHandle)
                     setErrors((prev) => ({ ...prev, instagramHandle: undefined }));
                 }}
-                disabled={submitting}
+                disabled={saving}
                 className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
               />
             </div>
@@ -506,7 +327,7 @@ export default function SignupPage() {
           {/* ─── Instagram URL (optional) ─── */}
           <div>
             <label
-              htmlFor="signup-instagram-url"
+              htmlFor="profile-instagram-url"
               className="mb-1.5 block text-sm font-medium text-white/60"
             >
               Instagram URL <span className="text-white/30">(optional)</span>
@@ -530,7 +351,7 @@ export default function SignupPage() {
                 />
               </svg>
               <input
-                id="signup-instagram-url"
+                id="profile-instagram-url"
                 type="url"
                 placeholder="https://instagram.com/username"
                 value={instagramUrl}
@@ -539,7 +360,7 @@ export default function SignupPage() {
                   if (errors.instagramUrl)
                     setErrors((prev) => ({ ...prev, instagramUrl: undefined }));
                 }}
-                disabled={submitting}
+                disabled={saving}
                 className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
               />
             </div>
@@ -551,7 +372,7 @@ export default function SignupPage() {
           {/* ─── Niche ─── */}
           <div>
             <label
-              htmlFor="signup-niche"
+              htmlFor="profile-niche"
               className="mb-1.5 block text-sm font-medium text-white/60"
             >
               Niche
@@ -580,7 +401,7 @@ export default function SignupPage() {
                 />
               </svg>
               <input
-                id="signup-niche"
+                id="profile-niche"
                 type="text"
                 placeholder="e.g. fitness, fashion, travel"
                 value={niche}
@@ -589,7 +410,7 @@ export default function SignupPage() {
                   if (errors.niche)
                     setErrors((prev) => ({ ...prev, niche: undefined }));
                 }}
-                disabled={submitting}
+                disabled={saving}
                 className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
               />
             </div>
@@ -601,7 +422,7 @@ export default function SignupPage() {
           {/* ─── Follower Range ─── */}
           <div>
             <label
-              htmlFor="signup-followers"
+              htmlFor="profile-followers"
               className="mb-1.5 block text-sm font-medium text-white/60"
             >
               Follower Range
@@ -625,7 +446,7 @@ export default function SignupPage() {
                 />
               </svg>
               <input
-                id="signup-followers"
+                id="profile-followers"
                 type="text"
                 placeholder="e.g. 1K-10K, 10K-100K"
                 value={followerRange}
@@ -634,7 +455,7 @@ export default function SignupPage() {
                   if (errors.followerRange)
                     setErrors((prev) => ({ ...prev, followerRange: undefined }));
                 }}
-                disabled={submitting}
+                disabled={saving}
                 className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
               />
             </div>
@@ -643,91 +464,23 @@ export default function SignupPage() {
             )}
           </div>
 
-          {/* ─── Confirm Password ─── */}
-          <div>
-            <label
-              htmlFor="signup-confirm"
-              className="mb-1.5 block text-sm font-medium text-white/60"
-            >
-              Confirm password
-            </label>
-            <div
-              className={`flex items-center gap-3 rounded-xl border bg-white/[0.03] px-4 py-3 backdrop-blur-sm transition-all duration-300 focus-within:border-indigo-500/40 focus-within:bg-white/[0.05] ${
-                errors.confirmPassword ? "border-rose-500/40" : "border-white/10"
-              }`}
-            >
-              <svg
-                className="h-5 w-5 shrink-0 text-white/30"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={1.5}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
-                />
-              </svg>
-              <input
-                id="signup-confirm"
-                type={showConfirm ? "text" : "password"}
-                autoComplete="new-password"
-                placeholder="Re-enter your password"
-                value={confirmPassword}
-                onChange={(e) => {
-                  setConfirmPassword(e.target.value);
-                  if (errors.confirmPassword)
-                    setErrors((prev) => ({
-                      ...prev,
-                      confirmPassword: undefined,
-                    }));
-                }}
-                disabled={submitting}
-                className="w-full bg-transparent text-sm text-white placeholder-white/30 outline-none disabled:opacity-50"
-              />
-              <button
-                type="button"
-                onClick={() => setShowConfirm((v) => !v)}
-                className="shrink-0 text-white/30 transition hover:text-white/60"
-                aria-label={showConfirm ? "Hide confirm password" : "Show confirm password"}
-              >
-                {showConfirm ? (
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                  </svg>
-                ) : (
-                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
-                )}
-              </button>
-            </div>
-            {errors.confirmPassword && (
-              <p className="mt-1 text-xs text-rose-400">
-                {errors.confirmPassword}
-              </p>
-            )}
-          </div>
-
           {/* ─── Submit ─── */}
           <button
             type="submit"
-            disabled={submitting}
+            disabled={saving}
             className="glass-btn mt-1 flex w-full items-center justify-center gap-2.5 rounded-xl px-5 py-3 text-sm font-semibold text-white transition-all disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {submitting ? (
+            {saving ? (
               <>
                 <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Creating account…
+                Saving…
               </>
             ) : (
               <>
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18 7.5v3m0 0v3m0-3h3m-3 0h-3m-2.25-4.125a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zM3 19.235v-.11a6.375 6.375 0 0112.75 0v.109A12.318 12.318 0 019.374 21c-2.331 0-4.512-.645-6.374-1.766z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                 </svg>
-                Create Account
+                Save Changes
               </>
             )}
           </button>
@@ -735,12 +488,11 @@ export default function SignupPage() {
 
         {/* ─── Navigation ─── */}
         <p className="mt-6 text-center text-sm text-white/40">
-          Already have an account?{" "}
           <Link
-            href="/loginpage"
+            href="/Dashboard"
             className="font-semibold text-indigo-400 transition hover:text-indigo-300"
           >
-            Sign In
+            ← Back to Dashboard
           </Link>
         </p>
       </div>
